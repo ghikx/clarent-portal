@@ -15,14 +15,18 @@ let unsubscribeNotifs = null
 
 // ─── OVERRIDE LOGIN ───
 window.login = async function() {
-  const email = document.getElementById('login-email')?.value;
-if (!email) {
-  alert('Please enter your email address');
-  return;
-}
+  // Grab inputs by type — HTML login fields have no IDs
+  const emailInput = document.querySelector('input[type="email"]')
+  const passwordInput = document.querySelector('input[type="password"]')
+
+  const email = emailInput?.value?.trim()
+  const password = passwordInput?.value
+
+  if (!email) { alert('Please enter your email address'); return }
+  if (!password) { alert('Please enter your password'); return }
 
   try {
-    const btn = document.querySelector('.lfield ~ button, button.btn-primary')
+    const btn = document.querySelector('.login-card .btn-primary')
     if (btn) { btn.textContent = 'Signing in...'; btn.disabled = true }
 
     const { user, profile } = await sbLogin(email, password)
