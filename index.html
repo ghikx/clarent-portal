@@ -639,7 +639,12 @@ body.light .topbar{background:rgba(255,255,255,0.9)}
           <div class="fgroup"><label>Google Drive Folder Link</label><input type="text" placeholder="https://drive.google.com/drive/folders/..."/></div>
           <div class="fgroup"><label>Notes <span style="color:var(--text3);text-transform:none;letter-spacing:0;font-weight:400">(optional)</span></label><textarea rows="3" placeholder="Specific areas of focus or known concerns..."></textarea></div>
           <div style="font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Payment Proof <span style="color:var(--danger)">*</span></div>
-          <div class="drop"><i class="ti ti-upload"></i><div class="drop-text">Drop wire transfer confirmation here</div><div class="drop-sub">PDF · JPG · PNG</div></div>
+          <div class="drop" id="drop-zone" onclick="document.getElementById('payment-proof-input').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+            <i class="ti ti-upload" id="drop-icon"></i>
+            <div class="drop-text" id="drop-text">Drop wire transfer confirmation here</div>
+            <div class="drop-sub" id="drop-sub">PDF · JPG · PNG</div>
+          </div>
+          <input type="file" id="payment-proof-input" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="handleFileSelect(event)"/>
           <div style="font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Wire Transfer Details</div>
           <div class="bank-box">
             <div class="bank-row"><span class="bank-key">Beneficiary</span><span class="bank-val">Clarent Advisory Ltd</span></div>
@@ -2031,14 +2036,93 @@ function drawGauge(score) {
 }
 
 // ═══ ACTIONS ═══
+// ── File upload helpers ─────────────────────────────────────────────
+let selectedPaymentFile = null;
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) setDropFile(file);
+}
+
+function handleDragOver(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const z = document.getElementById('drop-zone');
+  z.style.borderColor = 'var(--accent)';
+  z.style.background = 'var(--accent3)';
+}
+
+function handleDragLeave(e) {
+  e.preventDefault();
+  const z = document.getElementById('drop-zone');
+  z.style.borderColor = '';
+  z.style.background = '';
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const z = document.getElementById('drop-zone');
+  z.style.borderColor = '';
+  z.style.background = '';
+  const file = e.dataTransfer.files[0];
+  if (file) setDropFile(file);
+}
+
+function setDropFile(file) {
+  const allowed = ['application/pdf','image/jpeg','image/png'];
+  if (!allowed.includes(file.type) && !file.name.match(/\.(pdf|jpg|jpeg|png)$/i)) {
+    alert('Only PDF, JPG or PNG files are accepted.');
+    return;
+  }
+  selectedPaymentFile = file;
+  const zone = document.getElementById('drop-zone');
+  zone.style.borderColor = 'var(--accent)';
+  zone.style.background = 'var(--accent3)';
+  document.getElementById('drop-icon').className = 'ti ti-file-check';
+  document.getElementById('drop-icon').style.color = 'var(--accent)';
+  document.getElementById('drop-text').textContent = file.name;
+  document.getElementById('drop-text').style.color = 'var(--text)';
+  document.getElementById('drop-sub').textContent = (file.size / 1024).toFixed(0) + ' KB · Click to change';
+}
+
+function resetDropZone() {
+  selectedPaymentFile = null;
+  const inp = document.getElementById('payment-proof-input');
+  if (inp) inp.value = '';
+  const zone = document.getElementById('drop-zone');
+  zone.style.borderColor = '';
+  zone.style.background = '';
+  document.getElementById('drop-icon').className = 'ti ti-upload';
+  document.getElementById('drop-icon').style.color = '';
+  document.getElementById('drop-text').textContent = 'Drop wire transfer confirmation here';
+  document.getElementById('drop-text').style.color = '';
+  document.getElementById('drop-sub').textContent = 'PDF · JPG · PNG';
+}
+// ────────────────────────────────────────────────────────────────────
+
 function submitDeal() {
-  // Generate reference
+  const company = document.querySelector('#page-submit input[placeholder="Nexford Facilities Services Ltd"]').value.trim();
+  const dealVal = document.querySelector('#page-submit input[placeholder="\u00a338,500,000"]').value.trim();
+  const driveLink = document.querySelector('#page-submit input[placeholder*="drive.google.com"]').value.trim();
+
+  if (!company) { alert('Please enter the target company name.'); return; }
+  if (!dealVal) { alert('Please enter the deal value.'); return; }
+  if (!driveLink) { alert('Please enter the Google Drive folder link.'); return; }
+  if (!selectedPaymentFile) { alert('Please attach your wire transfer confirmation.'); return; }
+
   const ref = 'CLR-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random()*9000)+1000);
   document.getElementById('modal-ref-val').textContent = ref;
-  // Show modal
   document.getElementById('submit-modal').classList.add('show');
-  // Fire notification
   pushNotif('New mandate submitted — ' + ref + ' · Awaiting analysis','new');
+  setTimeout(() => {
+    document.querySelector('#page-submit input[placeholder="Nexford Facilities Services Ltd"]').value = '';
+    document.querySelector('#page-submit input[placeholder="\u00a338,500,000"]').value = '';
+    document.querySelector('#page-submit input[placeholder="UK / US / AU / CA"]').value = '';
+    document.querySelector('#page-submit input[placeholder*="drive.google.com"]').value = '';
+    document.querySelector('#page-submit textarea').value = '';
+    resetDropZone();
+  }, 300);
 }
 
 function closeModal(e) {
