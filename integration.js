@@ -1,9 +1,7 @@
 // ═══ CLARENT ADVISORY — SUPABASE INTEGRATION ═══
-// Single file — no imports needed, loads via CDN
 
 (async function() {
 
-// ─── LOAD SUPABASE FROM CDN ───
 const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm')
 
 const SUPABASE_URL = 'https://mzkrhvgneonrmjnvbnrr.supabase.co'
@@ -17,58 +15,52 @@ let dealsCache = []
 
 console.log('✅ Supabase loaded')
 
-// ─── OVERRIDE LOGIN ───
-window.login = async function() {
-  const emailInput = document.querySelector('input[type="email"]')
-  const passwordInput = document.querySelector('input[type="password"]')
-  const email = emailInput?.value?.trim()
-  const password = passwordInput?.value
+// ─── HELPERS ───
 
-  if (!email) { alert('Please enter your email address'); return }
+function showApp(profile, user) {
+  currentUser = user
+  currentProfile = profile
+  window.currentRole = profile.role
+
+  document.getElementById('user-avatar').textContent = profile.avatar_initials || profile.name.substring(0,2).toUpperCase()
+  document.getElementById('user-name').textContent = profile.name.toUpperCase()
+  document.getElementById('user-role').textContent = profile.role.toUpperCase()
+
+  document.getElementById('login-screen').style.display = 'none'
+  document.getElementById('app').style.display = 'flex'
+
+  buildNav()
+  loadNotifications()
+  subscribeToRealtimeNotifications()
+
+  const firstPage = NAV[window.currentRole][0].page
+  showPage(firstPage)
+  if (firstPage === 'dashboard') {
+    loadDeals().then(() => initDashboard())
+  }
+}
+
+// ─── LOGIN ───
+
+window.login = async function() {
+  const email    = document.querySelector('input[type="email"]')?.value?.trim()
+  const password = document.querySelector('input[type="password"]')?.value
+  const btn      = document.querySelector('.login-card .btn-primary')
+
+  if (!email)    { alert('Please enter your email address'); return }
   if (!password) { alert('Please enter your password'); return }
 
-  const btn = document.querySelector('.login-card .btn-primary')
   if (btn) { btn.textContent = 'Signing in...'; btn.disabled = true }
 
   try {
-    // Sign in
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password })
     if (authError) throw authError
 
-    // Get user profile
     const { data: profile, error: profileError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', authData.user.id)
-      .single()
-
+      .from('users').select('*').eq('id', authData.user.id).single()
     if (profileError) throw profileError
 
-    currentUser = authData.user
-    currentProfile = profile
-    window.currentRole = profile.role
-
-    // Update UI
-    document.getElementById('user-avatar').textContent = profile.avatar_initials || profile.name.substring(0,2).toUpperCase()
-    document.getElementById('user-name').textContent = profile.name.toUpperCase()
-    document.getElementById('user-role').textContent = profile.role.toUpperCase()
-
-    // Show app
-    document.getElementById('login-screen').style.display = 'none'
-    const app = document.getElementById('app')
-    app.style.display = 'flex'
-
-    // Build nav + init
-    buildNav()
-    await loadNotifications()
-    subscribeToRealtimeNotifications()
-
-    const firstPage = NAV[window.currentRole][0].page
-    showPage(firstPage)
-    if (firstPage === 'dashboard') {
-      await loadDeals()
-      initDashboard()
-    }
+    showApp(profile, authData.user)
 
   } catch (err) {
     console.error('Login error:', err)
@@ -77,17 +69,46 @@ window.login = async function() {
   }
 }
 
-// ─── OVERRIDE LOGOUT ───
+// ─── LOGOUT ───
+// Force signOut + clear session + retour login
+
 window.logout = async function() {
   await supabase.auth.signOut()
-  currentUser = null
+  currentUser    = null
   currentProfile = null
-  window.currentRole = 'admin'
+  window.currentRole = null
+  dealsCache = []
+
   document.getElementById('app').style.display = 'none'
   document.getElementById('login-screen').style.display = 'flex'
+
+  // Reset champs login
+  const emailInput = document.querySelector('input[type="email"]')
+  const passInput  = document.querySelector('input[type="password"]')
+  if (emailInput) emailInput.value = ''
+  if (passInput)  passInput.value  = ''
+}
+
+// ─── RESTORE SESSION ───
+// Si session active → reconnecte automatiquement
+// Si pas de profil en base → signOut propre (évite le bypass sans données)
+
+const { data: { session } } = await supabase.auth.getSession()
+if (session?.user) {
+  const { data: profile, error } = await supabase
+    .from('users').select('*').eq('id', session.user.id).single()
+
+  if (profile && !error) {
+    showApp(profile, session.user)
+  } else {
+    // Session orpheline (user Auth sans profil en base) → logout propre
+    console.warn('Session found but no profile — signing out')
+    await supabase.auth.signOut()
+  }
 }
 
 // ─── LOAD DEALS ───
+
 async function loadDeals() {
   try {
     let query = supabase
@@ -96,9 +117,9 @@ async function loadDeals() {
       .order('submitted_at', { ascending: false })
 
     const role = window.currentRole
-    if (role === 'client') query = query.eq('client_id', currentUser.id)
-    if (role === 'broker') query = query.eq('broker_id', currentUser.id)
-    if (role === 'analyst') query = query.eq('analyst_id', currentUser.id)
+    if (role === 'client')   query = query.eq('client_id',   currentUser.id)
+    if (role === 'broker')   query = query.eq('broker_id',   currentUser.id)
+    if (role === 'analyst')  query = query.eq('analyst_id',  currentUser.id)
 
     const { data, error } = await query
     if (error) throw error
@@ -107,7 +128,6 @@ async function loadDeals() {
     renderDealList(dealsCache)
     if (role === 'admin') renderDealManagement(dealsCache)
 
-    // Realtime
     supabase.channel('deals-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deals' }, async () => {
         const { data: fresh } = await query
@@ -123,6 +143,7 @@ async function loadDeals() {
 }
 
 // ─── RENDER DEAL LIST ───
+
 function renderDealList(deals) {
   const container = document.querySelector('.deal-list')
   if (!container) return
@@ -142,19 +163,31 @@ function renderDealList(deals) {
 
   const statusTag = {
     payment_submitted: '<span class="tag tag-pending">Awaiting Payment</span>',
-    analysis_started: '<span class="tag tag-progress">In Analysis</span>',
-    report_ready: '<span class="tag tag-ready">Report Ready</span>',
-    delivered: '<span class="tag tag-ready">Delivered</span>'
+    analysis_started:  '<span class="tag tag-progress">In Analysis</span>',
+    report_ready:      '<span class="tag tag-ready">Report Ready</span>',
+    delivered:         '<span class="tag tag-ready">Delivered</span>'
   }
-  const barColor = { payment_submitted:'var(--warning)', analysis_started:'var(--accent)', report_ready:'var(--success)', delivered:'var(--success)' }
-  const barWidth = { payment_submitted:'5%', analysis_started:'65%', report_ready:'100%', delivered:'100%' }
+  const barColor = {
+    payment_submitted: 'var(--warning)',
+    analysis_started:  'var(--accent)',
+    report_ready:      'var(--success)',
+    delivered:         'var(--success)'
+  }
+  const barWidth = {
+    payment_submitted: '5%',
+    analysis_started:  '65%',
+    report_ready:      '100%',
+    delivered:         '100%'
+  }
 
   container.innerHTML = deals.map(deal => `
     <div class="deal" onclick="showPage('reports')">
       <div class="deal-info">
         <div class="deal-name">${deal.target_company}</div>
         <div class="deal-meta">${deal.market} · ${deal.client?.name || ''}</div>
-        <div class="deal-bar"><div class="deal-bar-fill" style="width:${barWidth[deal.status]||'0%'};background:${barColor[deal.status]||'var(--border)'}"></div></div>
+        <div class="deal-bar">
+          <div class="deal-bar-fill" style="width:${barWidth[deal.status]||'0%'};background:${barColor[deal.status]||'var(--border)'}"></div>
+        </div>
       </div>
       <div class="deal-right">
         <div class="deal-val">${deal.deal_value}</div>
@@ -165,6 +198,7 @@ function renderDealList(deals) {
 }
 
 // ─── RENDER DEAL MANAGEMENT ───
+
 function renderDealManagement(deals) {
   const tbody = document.querySelector('#admin-mgmt .data-table tbody')
   if (!tbody) return
@@ -188,19 +222,21 @@ function renderDealManagement(deals) {
 }
 
 // ─── UPDATE DEAL STATUS ───
+
 window.updateDealStatus = async function(dealId, status) {
   const { error } = await supabase.from('deals').update({ status }).eq('id', dealId)
   if (error) { console.error(error); return }
   pushNotif(`Status updated — ${dealId} → ${status}`, 'success')
 }
 
-// ─── OVERRIDE SUBMIT DEAL ───
+// ─── SUBMIT DEAL ───
+
 window.submitDeal = async function() {
   const targetCompany = document.querySelector('#page-submit input[placeholder*="Nexford"]')?.value
-  const dealValue = document.querySelector('#page-submit input[placeholder*="38,500"]')?.value
-  const market = document.querySelector('#page-submit input[placeholder*="UK"]')?.value
-  const driveLink = document.querySelector('#page-submit input[placeholder*="drive.google"]')?.value
-  const notes = document.querySelector('#page-submit textarea')?.value
+  const dealValue     = document.querySelector('#page-submit input[placeholder*="38,500"]')?.value
+  const market        = document.querySelector('#page-submit input[placeholder*="UK"]')?.value
+  const driveLink     = document.querySelector('#page-submit input[placeholder*="drive.google"]')?.value
+  const notes         = document.querySelector('#page-submit textarea')?.value
 
   if (!targetCompany || !dealValue || !driveLink) {
     alert('Please fill in all required fields'); return
@@ -208,24 +244,24 @@ window.submitDeal = async function() {
 
   try {
     const ref = 'CLR-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random()*9000)+1000)
+
     const { data: deal, error } = await supabase
       .from('deals')
       .insert([{
         id: ref,
-        client_id: currentUser.id,
+        client_id:      currentUser.id,
         target_company: targetCompany,
-        deal_value: dealValue,
-        market: market || 'UK',
-        drive_link: driveLink,
-        notes: notes || null,
-        status: 'payment_submitted',
-        submitted_at: new Date().toISOString()
+        deal_value:     dealValue,
+        market:         market || 'UK',
+        drive_link:     driveLink,
+        notes:          notes || null,
+        status:         'payment_submitted',
+        submitted_at:   new Date().toISOString()
       }])
       .select().single()
 
     if (error) throw error
 
-    // Notify admins
     const { data: admins } = await supabase.from('users').select('id').eq('role','admin')
     for (const admin of admins||[]) {
       await supabase.from('notifications').insert({
@@ -243,11 +279,12 @@ window.submitDeal = async function() {
   }
 }
 
-// ─── OVERRIDE VALIDATE REPORT ───
+// ─── VALIDATE REPORT ───
+
 window.validateReport = async function(btn) {
-  const card = btn.closest('.analyst-card')
+  const card     = btn.closest('.analyst-card')
   const dealName = card.querySelector('[style*="font-size:14px"]')?.textContent?.trim()
-  const deal = dealsCache.find(d => d.target_company === dealName)
+  const deal     = dealsCache.find(d => d.target_company === dealName)
   if (!deal) return
 
   const { error } = await supabase.from('deals')
@@ -256,7 +293,6 @@ window.validateReport = async function(btn) {
 
   if (error) { console.error(error); return }
 
-  // Notify client
   await supabase.from('notifications').insert({
     user_id: deal.client_id, type: 'success',
     message: `Your DD report for ${deal.target_company} is ready for download`,
@@ -273,11 +309,12 @@ window.validateReport = async function(btn) {
   pushNotif(`Report validated — ${dealName}`, 'success')
 }
 
-// ─── OVERRIDE CONFIRM ACTION ───
+// ─── CONFIRM ACTION ───
+
 window.confirmAction = async function() {
   const { type, recipient, amount, deal: dealName } = window.currentAction || {}
   const wireRef = document.getElementById('action-wire-ref').value
-  const notes = document.getElementById('action-notes').value
+  const notes   = document.getElementById('action-notes').value
   document.getElementById('action-modal').classList.remove('show')
 
   if (type === 'confirm-payment') {
@@ -286,11 +323,13 @@ window.confirmAction = async function() {
       await supabase.from('deals').update({ payment_confirmed: true, wire_ref: wireRef }).eq('id', deal.id)
     }
     pushNotif(`Payment logged — ${dealName}`, 'success')
+
   } else if (type === 'pay-broker') {
     await supabase.from('commissions')
       .update({ status:'paid', paid_at: new Date().toISOString(), wire_ref: wireRef, notes })
       .eq('status', 'due')
     pushNotif(`Commission paid — ${recipient} · ${amount}`, 'success')
+
   } else if (type === 'pay-analyst') {
     await supabase.from('analyst_fees')
       .update({ status:'paid', paid_at: new Date().toISOString(), wire_ref: wireRef, notes })
@@ -300,6 +339,7 @@ window.confirmAction = async function() {
 }
 
 // ─── NOTIFICATIONS ───
+
 async function loadNotifications() {
   if (!currentUser) return
   const { data } = await supabase
@@ -357,35 +397,12 @@ window.notifyClient = async function(clientId, dealName) {
 
 function timeAgo(date) {
   const s = Math.floor((new Date() - date) / 1000)
-  if (s < 60) return 'just now'
-  if (s < 3600) return Math.floor(s/60) + 'm ago'
-  if (s < 86400) return Math.floor(s/3600) + 'h ago'
-  return Math.floor(s/86400) + 'd ago'
+  if (s < 60)    return 'just now'
+  if (s < 3600)  return Math.floor(s/60)    + 'm ago'
+  if (s < 86400) return Math.floor(s/3600)  + 'h ago'
+  return                Math.floor(s/86400) + 'd ago'
 }
 
-// ─── RESTORE SESSION ON PAGE LOAD ───
-const { data: { session } } = await supabase.auth.getSession()
-if (session?.user) {
-  const { data: profile } = await supabase
-    .from('users').select('*').eq('id', session.user.id).single()
-  if (profile) {
-    currentUser = session.user
-    currentProfile = profile
-    window.currentRole = profile.role
-    document.getElementById('user-avatar').textContent = profile.avatar_initials || profile.name.substring(0,2).toUpperCase()
-    document.getElementById('user-name').textContent = profile.name.toUpperCase()
-    document.getElementById('user-role').textContent = profile.role.toUpperCase()
-    document.getElementById('login-screen').style.display = 'none'
-    document.getElementById('app').style.display = 'flex'
-    buildNav()
-    await loadNotifications()
-    subscribeToRealtimeNotifications()
-    const firstPage = NAV[window.currentRole][0].page
-    showPage(firstPage)
-    if (firstPage === 'dashboard') { await loadDeals(); initDashboard() }
-  }
-}
-
-console.log('✅ Clarent Advisory — Supabase integration ready')
+console.log('✅ Clarent Advisory — integration ready')
 
 })()
